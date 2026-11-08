@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 
 const MODEL_LABELS = {
-  'openai/gpt-oss-20b': 'OpenAI GPT-OSS 20B (Ultra-Fast 1000 T/s - Recommended for Batch)',
-  'openai/gpt-oss-120b': 'OpenAI GPT-OSS 120B (Deep Reasoning 500 T/s - Best for 1-2 Files)',
-  'qwen/qwen3.8-27b': 'Alibaba Qwen 3.8 27B (High Precision - 450 T/s)'
+  'openai/gpt-oss-120b': 'OpenAI GPT-OSS 120B (Flagship Reasoning - Best Accuracy)',
+  'openai/gpt-oss-20b': 'OpenAI GPT-OSS 20B (Ultra-Fast 1000 T/s - High Speed)',
+  'qwen/qwen3.8-27b': 'Alibaba Qwen 3.8 27B (Fallback Model - 450 T/s)'
 };
 
 function App() {
   const [files, setFiles] = useState([]);
   const [availableModels, setAvailableModels] = useState([
-    'openai/gpt-oss-20b',
     'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'qwen/qwen3.8-27b'
   ]);
-  const [selectedModel, setSelectedModel] = useState('openai/gpt-oss-20b');
+  const [selectedModel, setSelectedModel] = useState('openai/gpt-oss-120b');
   const [loading, setLoading] = useState(false);
   const [resultData, setResultData] = useState(null);
   const [error, setError] = useState('');
@@ -38,7 +38,6 @@ function App() {
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       const selectedArray = Array.from(e.target.files);
-      // Sort files naturally by episode name
       selectedArray.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       setFiles(selectedArray);
       setError('');
@@ -53,10 +52,10 @@ function App() {
   // Export Raw Outputs as JSON
   const handleDownloadRawJSON = () => {
     if (!resultData) return;
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(resultData, null, 2));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(resultData, null, 2));
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `kukufm_raw_promo_outputs_${Date.now()}.json`);
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `kukufm_raw_promo_outputs_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -81,7 +80,7 @@ function App() {
     try {
       const response = await fetch('http://localhost:5000/api/extract-promos', {
         method: 'POST',
-        body: formData,
+        body: formData
       });
 
       const result = await response.json();
@@ -119,20 +118,18 @@ function App() {
       </nav>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 mt-6 sm:mt-8 space-y-6 sm:space-y-8">
-        
         {/* Configuration & Upload Panel */}
         <section className="bg-white p-5 sm:p-8 rounded-2xl shadow-sm border border-slate-200">
           <form onSubmit={handleUpload} className="space-y-6">
-            
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left Column: File Dropzone + File Name List */}
+              {/* Left Column: File Dropzone & File Name List */}
               <div className="flex flex-col space-y-4">
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">
                     1. Upload Episode Screenplays (.TXT)
                   </label>
-                  <label 
-                    htmlFor="file-upload" 
+                  <label
+                    htmlFor="file-upload"
                     className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors p-4"
                   >
                     <div className="flex flex-col items-center justify-center text-center">
@@ -140,18 +137,18 @@ function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
                       <p className="text-sm text-slate-700 font-semibold">
-                        Click to browse single or multiple .TXT files
+                        Click to browse single or multiple TXT files
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
                         Supports 1 to 50 episode scripts in a single run
                       </p>
                     </div>
-                    <input 
-                      id="file-upload" 
-                      type="file" 
+                    <input
+                      id="file-upload"
+                      type="file"
                       accept=".txt"
                       multiple
-                      className="hidden" 
+                      className="hidden"
                       onChange={handleFileChange}
                     />
                   </label>
@@ -164,18 +161,18 @@ function App() {
                       <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                         Uploaded Files ({files.length})
                       </span>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => setFiles([])}
-                        className="text-xs font-semibold text-rose-600 hover:text-rose-800"
+                        className="text-xs font-semibold text-rose-600 hover:text-rose-800 cursor-pointer"
                       >
                         Clear All
                       </button>
                     </div>
                     <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
                       {files.map((f, index) => (
-                        <div 
-                          key={index} 
+                        <div
+                          key={index}
                           className="flex justify-between items-center bg-white px-3 py-1.5 rounded-lg border border-slate-200 text-xs shadow-2xs"
                         >
                           <div className="flex items-center space-x-2 truncate pr-2">
@@ -193,7 +190,7 @@ function App() {
                             <button
                               type="button"
                               onClick={() => handleRemoveFile(index)}
-                              className="text-slate-400 hover:text-red-600 font-bold px-1"
+                              className="text-slate-400 hover:text-red-600 font-bold px-1 cursor-pointer"
                               title="Remove file"
                             >
                               ✕
@@ -223,25 +220,26 @@ function App() {
                       </option>
                     ))}
                   </select>
-
                   <div className="bg-blue-50 border border-blue-100 rounded-xl p-3.5 text-xs text-blue-900 space-y-1">
                     <p className="font-bold">Hybrid Architecture Pipeline:</p>
                     <p>1. <strong>Deterministic Code:</strong> Regex extracts scene timestamps, beats & episode bounds.</p>
                     <p>2. <strong>LLM Engine:</strong> Identifies 3-second scroll-stopping hooks & unresolved cliffhangers.</p>
-                    <p>3. <strong>Quality Gate:</strong> Verifies 20s–60s duration limits & flags potential editor risks.</p>
+                    <p>3. <strong>Quality Gate:</strong> Verifies 20s-60s duration limits & flags potential editor risks.</p>
                   </div>
                 </div>
 
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   disabled={loading || files.length === 0}
                   className={`w-full py-3.5 px-6 rounded-xl font-bold text-white transition-all cursor-pointer ${
-                    loading || files.length === 0 
-                      ? 'bg-slate-300 cursor-not-allowed text-slate-500' 
+                    loading || files.length === 0
+                      ? 'bg-slate-300 cursor-not-allowed text-slate-500'
                       : 'bg-rose-600 hover:bg-rose-700 shadow-md hover:shadow-lg'
                   }`}
                 >
-                  {loading ? `Analyzing ${files.length} Episode(s)...` : `Find & Rank Best Promos (${files.length} File${files.length === 1 ? '' : 's'})`}
+                  {loading
+                    ? `Analyzing ${files.length} Episode(s)...`
+                    : `Find & Rank Best Promos (${files.length} File${files.length === 1 ? '' : 's'})`}
                 </button>
               </div>
             </div>
@@ -270,7 +268,6 @@ function App() {
         {/* Results Dashboard */}
         {!loading && resultData && (
           <div className="space-y-6">
-            
             {/* Responsive Metrics Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
@@ -282,18 +279,18 @@ function App() {
                 <p className="text-2xl font-black text-rose-600 mt-1">{resultData.summary.totalPromosExtracted}</p>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                <p className="text-xs text-slate-500 uppercase font-bold">Active Model Used</p>
+                <p className="text-xs text-slate-500 uppercase font-bold">Active Model(s) Used</p>
                 <p className="text-sm font-bold text-slate-800 mt-2 truncate" title={resultData.summary.modelUsed}>
                   {resultData.summary.modelUsed}
                 </p>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                 <p className="text-xs text-slate-500 uppercase font-bold">Actual Run Cost</p>
-                <p className="text-xl font-black text-emerald-600 mt-1">{resultData.summary.estimatedRunCostUSD}</p>
+                <p className="text-2xl font-black text-emerald-600 mt-1">{resultData.summary.estimatedRunCostUSD}</p>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                 <p className="text-xs text-slate-500 uppercase font-bold">Est. 50-Ep Show Cost</p>
-                <p className="text-xl font-black text-blue-600 mt-1">{resultData.summary.projected50EpisodeShowCostUSD}</p>
+                <p className="text-2xl font-black text-blue-600 mt-1">{resultData.summary.projected50EpisodeShowCostUSD}</p>
               </div>
             </div>
 
@@ -317,7 +314,6 @@ function App() {
                   Where It Picks Badly (Quality Check)
                 </button>
               </div>
-
               <button
                 onClick={handleDownloadRawJSON}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm transition-colors cursor-pointer text-center"
@@ -331,7 +327,6 @@ function App() {
               <div className="space-y-4">
                 {resultData.globalRankedPromos.map((promo, index) => (
                   <div key={index} className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-sm hover:shadow-md transition-shadow">
-                    
                     {/* Card Header */}
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-slate-100">
                       <div className="flex flex-wrap items-center gap-2">
@@ -348,13 +343,14 @@ function App() {
                           {promo.promoTitle}
                         </h3>
                       </div>
-
                       <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
                         <span className="text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1 rounded">
                           Viral Score: {promo.viralScore}/100
                         </span>
                         <span className="text-slate-700 text-xs sm:text-sm font-mono bg-slate-100 px-3 py-1 rounded font-semibold">
-                          {promo.startTime} → {promo.endTime} ({promo.calculatedDurationSeconds}s)
+                          {promo.segments && promo.segments.length > 1
+                            ? `${promo.segments.length} Stitched Clips (${promo.calculatedDurationSeconds}s Total)`
+                            : `${promo.startTime} → ${promo.endTime} (${promo.calculatedDurationSeconds}s)`}
                         </span>
                       </div>
                     </div>
@@ -368,10 +364,10 @@ function App() {
                         <div className="space-y-1.5">
                           {promo.segments.map((seg, sIdx) => (
                             <div key={sIdx} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs bg-white px-3 py-2 rounded border border-slate-100 gap-1">
-                              <div className="flex items-center space-x-2">
+                              <div className="flex items-center space-x-2 shrink-0">
                                 <span className="font-bold text-slate-700">Seg #{seg.segmentOrder || sIdx + 1}:</span>
                                 <span className="font-mono font-semibold text-rose-600">{seg.startTime} → {seg.endTime}</span>
-                                <span className="text-slate-400">({seg.durationSeconds}s)</span>
+                                <span className="text-slate-500 font-semibold">({seg.durationSeconds}s)</span>
                               </div>
                               <span className="text-slate-600 italic">{seg.whatHappens}</span>
                             </div>
@@ -413,13 +409,14 @@ function App() {
                           <strong>Editor Quality Risk:</strong> {promo.qualityWarning}
                         </span>
                         <span className={`px-3 py-1.5 rounded-lg font-bold shrink-0 ${
-                          promo.isDurationValid ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                          promo.isDurationValid
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
                         }`}>
                           Rule Check: {promo.ruleValidationFlag}
                         </span>
                       </div>
                     </div>
-
                   </div>
                 ))}
               </div>
@@ -435,7 +432,7 @@ function App() {
                         {ep.metadata.episodeTitle} <span className="text-xs font-normal text-slate-500">({ep.fileName})</span>
                       </h3>
                       <span className="text-xs bg-slate-100 px-3 py-1 rounded font-mono text-slate-600">
-                        Episode Length: ~{ep.metadata.totalDurationSeconds}s | Timestamped Beats: {ep.metadata.totalTimestampedBeats}
+                        Episode Length: {ep.metadata.totalDurationSeconds}s | Timestamped Beats: {ep.metadata.totalTimestampedBeats}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 italic">{ep.metadata.logline}</p>
@@ -449,10 +446,8 @@ function App() {
                 ))}
               </div>
             )}
-
           </div>
         )}
-
       </div>
     </div>
   );
