@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import Groq from 'groq-sdk';
 
-// Load environment variables
+// Load environment variables from .env
 dotenv.config();
 
 const app = express();
@@ -14,33 +14,42 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Initialize Groq Client
+// Initialize Groq Client with timeout protection
 const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY,
+    timeout: 25 * 1000, // 25-second timeout per request so 120B never hangs indefinitely
+    maxRetries: 1
 });
 
 // Configure Multer for multiple file uploads in memory
 const upload = multer({ 
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+    limits: { fileSize: 15 * 1024 * 1024 }
 });
 
-// Priority list of active production models from Groq Documentation
-const FALLBACK_MODELS = [
-    'openai/gpt-oss-120b',
-    'openai/gpt-oss-20b',
-    'qwen/qwen3.8-27b'
+// Read models dynamically from .env with safe defaults
+const ENV_MODELS = [
+    process.env.PRIMARY_MODEL || 'openai/gpt-oss-20b',
+    process.env.FALLBACK_MODEL_1 || 'openai/gpt-oss-120b',
+    process.env.FALLBACK_MODEL_2 || 'qwen/qwen3.8-27b'
 ];
 
+// Model Pricing Map (per 1 Million Tokens from Groq Docs)
+const MODEL_PRICING = {
+    'openai/gpt-oss-20b': { input: 0.075, output: 0.30 },
+    'openai/gpt-oss-120b': { input: 0.15, output: 0.60 },
+    'qwen/qwen3.8-27b': { input: 0.80, output: 4.00 }
+};
+
 /**
- * Helper Function: Rule-Based Script Pre-Parser
- * Extracts deterministic metadata using Regex before sending to LLM.
+ * Helper: Rule-Based Script Pre-Parser
+ * Uses Regex to deterministically extract episode number, logline, duration, and action/dialogue beats.
  */
 function parseScriptMetadata(scriptText, fileName) {
     const episodeMatch = scriptText.match(/EPISODE NUMBER:\s*(.+)/i);
     const loglineMatch = scriptText.match(/EPISODE LOGLINE:\s*(.+)/i);
+    const continuityMatch = scriptText.match(/CONTINUITY NOTES:\s*(.+)/i);
     
-    // Extract all timestamps in format (MM:SS.ms) or MM:SS.ms
     const timeRegex = /Start:\s*\(?(\d{2}:\d{2}\.\d{2})\)?\s*\|\s*End:\s*\(?(\d{2}:\d{2}\.\d{2})\)?/g;
     let match;
     let maxEndSeconds = 0;
@@ -56,13 +65,14 @@ function parseScriptMetadata(scriptText, fileName) {
     return {
         episodeTitle: episodeMatch ? episodeMatch[1].trim() : fileName.replace('.txt', ''),
         logline: loglineMatch ? loglineMatch[1].trim() : 'No logline provided.',
+        continuityNotes: continuityMatch ? continuityMatch[1].trim() : '',
         totalDurationSeconds: Math.round(maxEndSeconds),
         totalTimestampedBeats: totalSegments
     };
 }
 
 /**
- * Helper Function: Convert MM:SS.ms to Seconds for Rule Validation
+ * Helper: Convert MM:SS.ms timestamp string into numeric seconds
  */
 function timestampToSeconds(ts) {
     if (!ts || typeof ts !== 'string') return 0;
@@ -73,29 +83,15 @@ function timestampToSeconds(ts) {
 }
 
 /**
- * GET /api/models
- * Dynamically fetches active models from Groq API so the app never breaks on deprecations.
+ * GET /api/config
+ * Returns configured .env models to the frontend so UI stays synced with .env
  */
-app.get('/api/models', async (req, res) => {
-    try {
-        const response = await groq.models.list();
-        const availableModels = response.data
-            .map(m => m.id)
-            .filter(id => !id.includes('whisper') && !id.includes('guard') && !id.includes('orpheus'));
-        
-        res.status(200).json({
-            status: 'success',
-            recommended: FALLBACK_MODELS,
-            allActiveModels: availableModels
-        });
-    } catch (error) {
-        console.error('Error fetching models:', error.message);
-        res.status(200).json({
-            status: 'fallback',
-            recommended: FALLBACK_MODELS,
-            allActiveModels: FALLBACK_MODELS
-        });
-    }
+app.get('/api/config', (req, res) => {
+    res.status(200).json({
+        status: 'success',
+        primaryModel: ENV_MODELS[0],
+        configuredModels: ENV_MODELS
+    });
 });
 
 /**
@@ -105,61 +101,67 @@ app.get('/api/models', async (req, res) => {
 app.post('/api/extract-promos', upload.array('scriptFiles', 55), async (req, res) => {
     try {
         const files = req.files;
-        const preferredModel = req.body.model || 'openai/gpt-oss-120b';
+        const requestedModel = req.body.model || ENV_MODELS[0];
 
         if (!files || files.length === 0) {
             return res.status(400).json({ error: 'No script files provided. Please upload at least one .txt file.' });
         }
 
+        // Build priority fallback queue starting with user/env selected model
         const modelQueue = [
-            preferredModel,
-            ...FALLBACK_MODELS.filter(m => m !== preferredModel)
+            requestedModel,
+            ...ENV_MODELS.filter(m => m !== requestedModel)
         ];
 
         const episodeResults = [];
         let allExtractedPromos = [];
         let totalPromptTokens = 0;
         let totalCompletionTokens = 0;
-        let actualModelUsed = preferredModel;
+        let actualModelUsed = requestedModel;
 
-        // Process each uploaded episode script
         for (const file of files) {
             const scriptContent = file.buffer.toString('utf-8');
             const metadata = parseScriptMetadata(scriptContent, file.originalname);
 
-            const systemPrompt = `You are a Principal Short-Form Video Editor & Growth Strategist at a vertical microdrama platform (like Kuku TV, ReelShort, DramaBox).
-Your job is to read a timestamped episode screenplay and find the highest-converting promotional clips (promos) for Instagram Reels, TikTok, and YouTube Shorts.
+            const systemPrompt = `You are a Principal Short-Form Video Editor & User Acquisition Strategist for vertical microdrama apps (Kuku TV, ReelShort, DramaBox).
+Your task is to analyze the screenplay and extract 2 to 3 distinct promotional clips (promos) that will drive the highest viewer conversion on Instagram Reels, TikTok, and YouTube Shorts.
 
-STRICT PROMO RULES:
-1. Duration: Each promo MUST be between 20 and 60 seconds total. It can be a single continuous stretch OR 2-3 stitched segments from the episode.
-2. The 3-Second Hook: Must open on an immediate visual/verbal hook in the first 3 seconds (betrayal, slap, power reversal, shocking accusation, emotional breakdown, or physical confrontation).
-3. The Cliffhanger Cut: Must cut at maximum unresolved tension so the viewer is forced to download the app to see what happens next.
-4. Standalone Clarity: A cold viewer scrolling their feed with zero prior context must immediately understand the stakes and conflict.
-5. Honest Self-Critique (Quality Check): Critically evaluate where your pick might fail or feel weak (e.g., relies on dialogue over visual action, abrupt cut, or slightly melodramatic).
+STRICT KUKUFM PROMO SPECIFICATIONS:
+1. Total Duration: Strictly between 20 and 60 seconds per promo.
+2. Continuous OR Multi-Segment: Provide at least one continuous stretch promo AND, if effective, one stitched multi-segment promo (joining 2-3 key moments in chronological order).
+3. The 3-Second Hook: Must open on a high-impact visual or spoken hook in the first 3 seconds (a slap, a betrayal reveal, a shocking line, physical confrontation, or emotional humiliation).
+4. The Cliffhanger Cut: Must end abruptly at an unresolved, high-tension beat so the viewer needs to watch the show to know what happens next.
+5. Standalone Clarity: Must make complete sense to a cold viewer who has never seen the show. Include the actual spoken dialogue or action lines in your hook and cliffhanger descriptions.
+6. Quality & Failure Check: Be brutally honest about where a promo might fail or where the episode script lacks strong ad potential.
 
-Return STRICTLY a valid JSON object matching this exact schema:
+Return STRICTLY a valid JSON object matching this exact structure:
 {
   "promos": [
     {
-      "promoTitle": "Short punchy title for the ad creative",
-      "isMultiSegment": false,
+      "promoTitle": "Catchy title for this promo angle",
+      "promoType": "Continuous Clip" or "Multi-Segment Stitch",
       "segments": [
-        { "startTime": "00:11.00", "endTime": "00:43.90", "durationSeconds": 33 }
+        {
+          "segmentOrder": 1,
+          "startTime": "00:11.00",
+          "endTime": "00:43.90",
+          "whatHappens": "Brief description of dialogue/action in this segment"
+        }
       ],
       "startTime": "00:11.00",
       "endTime": "00:43.90",
-      "totalDurationSeconds": 33,
-      "hook": "Exact line or visual action in the first 3 seconds that stops the scroll.",
-      "cliffhanger": "Exact unresolved moment where the clip cuts to black.",
-      "whyItWorks": "One crisp sentence explaining the psychological trigger (e.g., public humiliation, status reversal, justice desire).",
-      "viralScore": 92,
-      "qualityWarning": "Honest critique of where this clip might underperform or why an editor might reject it."
+      "hook": "Quote the exact opening line/action in the first 3s and explain why it stops the scroll.",
+      "cliffhanger": "Quote the exact final line/action where the clip cuts and what question is left unanswered.",
+      "whyItWorks": "One crisp sentence explaining why this pulls new viewers in.",
+      "postingStrategy": "Why post this first/second and which platform (Reels/TikTok/Shorts) suits it best.",
+      "viralScore": 94,
+      "qualityWarning": "Specific critique of where this pick might underperform (e.g., slow pacing, dialogue-heavy, or mild emotional stakes)."
     }
   ],
-  "episodeFailureAnalysis": "One honest paragraph explaining where the automated tool struggled in this specific script (e.g., slow conversational pacing, lack of physical hooks, or heavy reliance on prior episode continuity)."
+  "episodeFailureAnalysis": "Honest 2-sentence evaluation of where this episode struggles for promo extraction (e.g., quiet bonding episode with low conflict, or requires heavy backstory)."
 }`;
 
-            const userPrompt = `Episode Name: ${metadata.episodeTitle}
+            const userPrompt = `Episode: ${metadata.episodeTitle}
 Logline: ${metadata.logline}
 Total Episode Duration: ~${metadata.totalDurationSeconds} seconds
 
@@ -169,7 +171,7 @@ ${scriptContent}`;
             let aiResponseText = null;
             let lastError = null;
 
-            // Auto-Fallback Execution Loop across models
+            // Execute with Automatic Model Fallback
             for (const candidateModel of modelQueue) {
                 try {
                     const completion = await groq.chat.completions.create({
@@ -189,37 +191,62 @@ ${scriptContent}`;
                         totalPromptTokens += completion.usage.prompt_tokens || 0;
                         totalCompletionTokens += completion.usage.completion_tokens || 0;
                     }
-                    break; // Success! Exit fallback loop
+                    break;
                 } catch (err) {
-                    console.warn(`Model ${candidateModel} failed (${err.message}). Trying next fallback model...`);
+                    console.warn(`[Auto-Fallback] Model ${candidateModel} failed or timed out (${err.message}). Switching to next model...`);
                     lastError = err;
                 }
             }
 
             if (!aiResponseText) {
-                throw new Error(`All models failed. Last error: ${lastError?.message}`);
+                throw new Error(`All configured models failed. Last error: ${lastError?.message}`);
             }
 
             const parsedData = JSON.parse(aiResponseText);
             const rawPromos = parsedData.promos || [];
 
-            // Deterministic Code Post-Processing & Rule Verification
+            // Deterministic Code Post-Processing: Sum segments accurately
             const verifiedPromos = rawPromos.map((promo) => {
-                const startSec = timestampToSeconds(promo.startTime);
-                const endSec = timestampToSeconds(promo.endTime);
-                const calcDuration = endSec > startSec ? Math.round(endSec - startSec) : (promo.totalDurationSeconds || 30);
-                
-                // Rule Check: Is duration strictly within 20s - 60s?
-                const isDurationValid = calcDuration >= 20 && calcDuration <= 60;
-                let ruleFlag = 'PASS (Optimal 20s-60s Window)';
-                if (calcDuration < 20) ruleFlag = `WARNING: Short Clip (${calcDuration}s < 20s min)`;
-                if (calcDuration > 60) ruleFlag = `WARNING: Long Clip (${calcDuration}s > 60s max)`;
+                let totalCalcSec = 0;
+                const processedSegments = (promo.segments && promo.segments.length > 0)
+                    ? promo.segments.map((seg, idx) => {
+                        const s = timestampToSeconds(seg.startTime);
+                        const e = timestampToSeconds(seg.endTime);
+                        const dur = e > s ? Math.round(e - s) : 15;
+                        totalCalcSec += dur;
+                        return {
+                            segmentOrder: idx + 1,
+                            startTime: seg.startTime,
+                            endTime: seg.endTime,
+                            durationSeconds: dur,
+                            whatHappens: seg.whatHappens || ''
+                        };
+                    })
+                    : [{
+                        segmentOrder: 1,
+                        startTime: promo.startTime,
+                        endTime: promo.endTime,
+                        durationSeconds: Math.max(1, Math.round(timestampToSeconds(promo.endTime) - timestampToSeconds(promo.startTime))),
+                        whatHappens: 'Continuous sequence'
+                    }];
+
+                if (totalCalcSec === 0) {
+                    const s = timestampToSeconds(promo.startTime);
+                    const e = timestampToSeconds(promo.endTime);
+                    totalCalcSec = e > s ? Math.round(e - s) : 30;
+                }
+
+                const isDurationValid = totalCalcSec >= 20 && totalCalcSec <= 60;
+                let ruleFlag = `PASS (${totalCalcSec}s is within 20s-60s target)`;
+                if (totalCalcSec < 20) ruleFlag = `FLAGGED: Too Short (${totalCalcSec}s < 20s min)`;
+                if (totalCalcSec > 60) ruleFlag = `FLAGGED: Too Long (${totalCalcSec}s > 60s max)`;
 
                 return {
                     ...promo,
                     episodeName: metadata.episodeTitle,
                     fileName: file.originalname,
-                    calculatedDurationSeconds: calcDuration,
+                    segments: processedSegments,
+                    calculatedDurationSeconds: totalCalcSec,
                     isDurationValid,
                     ruleValidationFlag: ruleFlag
                 };
@@ -230,10 +257,15 @@ ${scriptContent}`;
             episodeResults.push({
                 fileName: file.originalname,
                 metadata,
-                episodeFailureAnalysis: parsedData.episodeFailureAnalysis || 'No specific structural failures detected.',
+                episodeFailureAnalysis: parsedData.episodeFailureAnalysis || 'No structural failures noted.',
                 promosCount: verifiedPromos.length,
                 promos: verifiedPromos
             });
+
+            // Small 300ms breather between files during large batch runs to respect rate limits
+            if (files.length > 3) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
         }
 
         // Global Ranking across all uploaded episodes by viralScore
@@ -243,8 +275,9 @@ ${scriptContent}`;
             globalRank: idx + 1
         }));
 
-        // Calculate Real-World Scale Cost (based on GPT-OSS-120B pricing: $0.15/1M input, $0.60/1M output)
-        const estimatedCostUSD = ((totalPromptTokens / 1_000_000) * 0.15) + ((totalCompletionTokens / 1_000_000) * 0.60);
+        // Accurate Cost Calculation based on the actual model used
+        const pricing = MODEL_PRICING[actualModelUsed] || MODEL_PRICING['openai/gpt-oss-20b'];
+        const estimatedCostUSD = ((totalPromptTokens / 1_000_000) * pricing.input) + ((totalCompletionTokens / 1_000_000) * pricing.output);
 
         res.status(200).json({
             status: 'success',
@@ -273,5 +306,5 @@ ${scriptContent}`;
 });
 
 app.listen(PORT, () => {
-    console.log(`Backend Server is successfully running on port ${PORT}`);
+    console.log(`Backend Server is running on port ${PORT} | Primary Model (.env): ${ENV_MODELS[0]}`);
 });
